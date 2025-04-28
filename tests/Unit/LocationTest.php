@@ -277,12 +277,66 @@ class LocationTest extends TestCase
         );
     }
 
+    public function testParseSpaceSeparatedCoordinatesAdditionalTest(): void
+    {
+        $this->runLocationParseTest(
+            '30.5 -90.75',
+            30.5,
+            -90.75
+        );
+    }
+
     public function testParseCommaSeparatedCoordinates(): void
     {
         $this->runLocationParseTest(
             '-23.4567,134.5678',
             -23.4567,
             134.5678
+        );
+    }
+
+    /**
+     * Helper to assert display() behavior:
+     *  - Without coords it strips them out
+     *  - With coords it appends “[lat,lng]”
+     *
+     * @param string $rawInput
+     * @param string $expectedBase  what display(false) should return
+     * @param string $expectedFull  what display(true) should return
+     */
+    private function runLocationDisplayTest(string $rawInput, string $expectedBase, string $expectedFull): void
+    {
+        Config::set('geoloc.dns', false);
+        Config::set('geoloc.latlng', false);
+
+        $device = Device::factory()->make();
+        $device->setLocation($rawInput, true);
+
+        $this->assertEquals($expectedBase, $device->location->display(false));
+        $this->assertEquals($expectedFull, $device->location->display(true));
+    }
+
+    public function testDisplayStripsOriginalCoordinates(): void
+    {
+        // Bracketed coords
+        $this->runLocationDisplayTest(
+            'HQ Office [10.0,20.0]',
+            'HQ Office',
+            'HQ Office [10,20]'
+        );
+
+        // Space-separated coords
+        $this->runLocationDisplayTest(
+            'Remote Site 30.5 -90.75',
+            'Remote Site',
+            'Remote Site [30.5,-90.75]'
+        );
+
+        // Comma-separated coords
+        $this->runLocationDisplayTest(
+            'Field Station 45.123,-120.456',
+            'Field Station',
+            'Field Station [45.123,-120.456]'
         );
     }
 
