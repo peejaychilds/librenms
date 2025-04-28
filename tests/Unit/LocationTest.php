@@ -237,4 +237,53 @@ class LocationTest extends TestCase
         $this->assertEquals($location_api->lat, $device->location->lat);
         $this->assertEquals($location_api->lng, $device->location->lng);
     }
+
+    /**
+     * Helper to assert that parsing a given input string
+     * yields the expected latitude and longitude.
+     *
+     * @param string $input
+     * @param float  $expectedLat
+     * @param float  $expectedLng
+     */
+    private function runLocationParseTest(string $input, float $expectedLat, float $expectedLng): void
+    {
+        Config::set('geoloc.dns', false);
+        Config::set('geoloc.latlng', false);
+
+        $device = Device::factory()->make(); /** @var Device $device */
+        $device->setLocation($input, true);
+
+        $this->assertEquals($expectedLat, $device->location->lat);
+        $this->assertEquals($expectedLng, $device->location->lng);
+        $this->assertEquals($input, $device->location->location);
+    }
+
+    public function testParseBracketedCommaSeparatedCoordinates(): void
+    {
+        $this->runLocationParseTest(
+            '[12.3456,78.9012]',
+            12.3456,
+            78.9012
+        );
+    }
+
+    public function testParseSpaceSeparatedCoordinates(): void
+    {
+        $this->runLocationParseTest(
+            '12.3456 78.9012',
+            12.3456,
+            78.9012
+        );
+    }
+
+    public function testParseCommaSeparatedCoordinates(): void
+    {
+        $this->runLocationParseTest(
+            '-23.4567,134.5678',
+            -23.4567,
+            134.5678
+        );
+    }
+
 }
