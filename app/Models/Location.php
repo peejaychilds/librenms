@@ -44,7 +44,20 @@ class Location extends Model
     const CREATED_AT = null;
     const UPDATED_AT = 'timestamp';
 
-    private $location_regex = '/\[\s*(?<lat>[-+]?(?:[1-8]?\d(?:\.\d+)?|90(?:\.0+)?))\s*,\s*(?<lng>[-+]?(?:180(?:\.0+)?|(?:(?:1[0-7]\d)|(?:[1-9]?\d))(?:\.\d+)?))\s*\]/';
+    /**
+     * All the coordinate formats we support, as *suffixes*:
+     *  1) [lat,lng] at end
+     *  2) lat<single-space>lng at end
+     *  3) lat,lng (optional spaces) at end
+     */
+    private $location_regexes = [
+        // Format: [xx.xxx,xx.xxx]
+        '/\[\s*(?<lat>[-+]?(?:[1-8]?\d(?:\.\d+)?|90(?:\.0+)?))\s{0,1},\s{0,1}(?<lng>[-+]?(?:180(?:\.0+)?|(?:(?:1[0-7]\d)|(?:[1-9]?\d))(?:\.\d+)?))\s*\]$/',
+        // Format: xx.xxx xx.xxx (exactly ONE space, at end)
+        '/(?<lat>[-+]?(?:[1-8]?\d(?:\.\d+)?|90(?:\.0+)?))\s{1}(?<lng>[-+]?(?:180(?:\.0+)?|(?:(?:1[0-7]\d)|(?:[1-9]?\d))(?:\.\d+)?))$/',
+        // Format: xx.xxx,xx.xxx (comma, optional spaces, at end)
+        '/(?<lat>[-+]?(?:[1-8]?\d(?:\.\d+)?|90(?:\.0+)?))\s{0,1},\s{0,1}(?<lng>[-+]?(?:180(?:\.0+)?|(?:(?:1[0-7]\d)|(?:[1-9]?\d))(?:\.\d+)?))$/',
+    ];
     private $location_ignore_regex = '/\(.*?\)/';
 
     /**
@@ -120,18 +133,30 @@ class Location extends Model
      */
     public function display($withCoords = false)
     {
-        return (trim(preg_replace($this->location_regex, '', $this->location)) ?: $this->location)
-            . ($withCoords && $this->coordinatesValid() ? " [$this->lat,$this->lng]" : '');
+        // strip out ALL of the possible regex matches
+        $base = $this->location;
+        foreach ($this->location_regexes as $regex) {
+            $base = preg_replace($regex, '', $base);
+        }
+        $base = trim($base) ?: $this->location;
+        if ($withCoords && $this->coordinatesValid()) {
+            return $base . " [{$this->lat},{$this->lng}]";
+        }
+        return $base;
     }
 
     protected function parseCoordinates()
     {
-        if (preg_match($this->location_regex, $this->location, $parsed)) {
-            $this->fill($parsed);
-
-            return true;
+        foreach ($this->location_regexes as $regex) {
+            if (preg_match($regex, $this->location, $parsed)) {
+                // only pull lat/lng from the named captures
+                $this->fill([
+                    'lat' => (float) $parsed['lat'],
+                    'lng' => (float) $parsed['lng'],
+                ]);
+                return true;
+            }
         }
-
         return false;
     }
 
