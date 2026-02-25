@@ -1,0 +1,9 @@
+os: opengear-lighthouse
+text: Opengear Lighthouse
+type: management
+icon: opengear
+mib_dir: opengear
+discovery:
+  -
+    sysObjectID:
+      - .1.3.6.1.4.1.25049.1.42
