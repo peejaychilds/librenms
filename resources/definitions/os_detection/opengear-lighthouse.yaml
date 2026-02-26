@@ -3,6 +3,7 @@ text: Opengear Lighthouse
 type: management
 icon: opengear
 mib_dir: opengear
+snmp_max_oid: 1
 discovery:
   -
     sysObjectID:
