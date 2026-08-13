@@ -79,6 +79,7 @@ class ServiceConfig(DBConfig):
     single_instance = True
     distributed = False
     group = 0
+    poller_renew_locks = False
 
     debug = False
     log_level = 20
@@ -126,6 +127,10 @@ class ServiceConfig(DBConfig):
         self.distributed = config.get("distributed_poller", ServiceConfig.distributed)
         self.group = ServiceConfig.parse_group(
             config.get("distributed_poller_group", ServiceConfig.group)
+        )
+        self.poller_renew_locks = os.getenv(
+            "DISPATCHER_POLLER_RENEW_LOCKS",
+            ServiceConfig.poller_renew_locks,
         )
 
         self.master_timeout = config.get(
