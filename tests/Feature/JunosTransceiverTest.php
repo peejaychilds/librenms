@@ -6,6 +6,7 @@ use App\Discovery\Sensor as SensorDiscovery;
 use App\Models\Device;
 use App\Models\Port;
 use App\Models\Sensor;
+use App\Models\Transceiver;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use LibreNMS\Data\Source\Snmp\SnmpQueryBuilder;
 use LibreNMS\Data\Source\Snmp\SnmpResponse;
@@ -108,18 +109,25 @@ final class JunosTransceiverTest extends DBTestCase
     }
 
     /** @return array<string, array{string}> */
-    public static function unknownSerials(): array
+    public static function emptySerials(): array
     {
-        return ['blank' => [''], 'whitespace' => ['  '], 'unknown' => ['unknown'], 'unavailable' => ['N/A'], 'zero' => ['0']];
+        return ['blank' => [''], 'whitespace' => ['  ']];
     }
 
-    #[DataProvider('unknownSerials')]
-    public function test_unknown_serial_does_not_overwrite_known_identity(string $serial): void
+    #[DataProvider('emptySerials')]
+    public function test_empty_serial_does_not_overwrite_known_identity(string $serial): void
     {
         $this->discover();
         $this->entities['ENTITY-MIB::entPhysicalSerialNum.75'] = $serial;
         $this->discover();
         $this->assertSame('SERIAL-A', $this->device->transceivers()->firstOrFail()->serial);
+    }
+
+    public function test_nonempty_serials_are_not_classified_as_missing(): void
+    {
+        foreach (['unknown', 'N/A', 'none', 'BUILTIN', '0', '-', '  ABC123  '] as $serial) {
+            $this->assertSame(trim($serial), Transceiver::normalizeSerial($serial));
+        }
     }
 
     public function test_missing_inventory_does_not_invent_a_new_transceiver(): void
