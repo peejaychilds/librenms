@@ -43,6 +43,16 @@ class Transceiver extends PortRelatedModel implements Keyable
         ];
     }
 
+    /**
+     * Missing/placeholder identity must not replace a known optic serial.
+     */
+    public static function normalizeSerial(?string $serial): ?string
+    {
+        $serial = trim((string) $serial);
+
+        return in_array(strtolower($serial), ['', 'unknown', 'n/a', 'none', 'builtin', '0', '-'], true) ? null : $serial;
+    }
+
     public function getCompositeKey(): string
     {
         return (string) $this->index;

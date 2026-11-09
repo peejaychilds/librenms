@@ -40,6 +40,8 @@ use App\Models\Vlan;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use LibreNMS\Data\Source\Snmp\SnmpResponse;
+use LibreNMS\Exceptions\SnmpException;
 use LibreNMS\Interfaces\Data\DataStorageInterface;
 use LibreNMS\Interfaces\Discovery\BgpAddressFamilyDiscovery;
 use LibreNMS\Interfaces\Discovery\SlaDiscovery;
@@ -52,6 +54,7 @@ use LibreNMS\OS\Traits\EntityMib;
 use LibreNMS\RRD\RrdDefinition;
 use LibreNMS\Util\Bgp;
 use LibreNMS\Util\IP;
+use LibreNMS\Util\StringHelpers;
 use SnmpQuery;
 
 class Junos extends \LibreNMS\OS implements BgpAddressFamilyDiscovery, SlaDiscovery, OSPolling, SlaPolling, TransceiverDiscovery, VlanDiscovery, VlanPortDiscovery
@@ -378,12 +381,22 @@ class Junos extends \LibreNMS\OS implements BgpAddressFamilyDiscovery, SlaDiscov
 
     public function discoverTransceivers(): Collection
     {
-        $entPhysical = SnmpQuery::walk('ENTITY-MIB::entityPhysical')->table(1);
+        $entPhysical = $this->transceiverTable('ENTITY-MIB::entityPhysical')->table(1);
+        $existing = $this->getDevice()->transceivers->keyBy('index');
 
-        $jnxDomCurrentTable = SnmpQuery::cache()->walk('JUNIPER-DOM-MIB::jnxDomCurrentTable')->mapTable(function ($data, $ifIndex) use ($entPhysical) {
+        $removed = [];
+        $jnxDomCurrentTable = $this->transceiverTable('JUNIPER-DOM-MIB::jnxDomCurrentTable')->mapTable(function ($data, $ifIndex) use ($entPhysical, $existing, &$removed) {
+            if ($this->isDomModuleRemoved($data)) {
+                $removed[(string) $ifIndex] = true;
+
+                return null;
+            }
+
+            $previous = $existing->get((string) $ifIndex);
             $ent = $this->findTransceiverEntityByPortName($entPhysical, PortCache::getNameFromIfIndex($ifIndex, $this->getDevice()));
             if (empty($ent)) {
-                return null; // no module
+                // DOM still reports the port; missing inventory is not proof of removal.
+                return $previous?->replicate();
             }
 
             return new Transceiver([
@@ -393,7 +406,7 @@ class Junos extends \LibreNMS\OS implements BgpAddressFamilyDiscovery, SlaDiscov
                 'vendor' => $ent['ENTITY-MIB::entPhysicalMfgName'] ?? null,
                 'model' => $ent['ENTITY-MIB::entPhysicalModelName'] ?? null,
                 'revision' => $ent['ENTITY-MIB::entPhysicalHardwareRev'] ?? null,
-                'serial' => $ent['ENTITY-MIB::entPhysicalSerialNum'] ?? null,
+                'serial' => Transceiver::normalizeSerial($ent['ENTITY-MIB::entPhysicalSerialNum'] ?? null) ?? $previous?->serial,
                 'channels' => $data['JUNIPER-DOM-MIB::jnxDomCurrentModuleLaneCount'] ?? 0,
                 'entity_physical_index' => $ifIndex,
             ]);
@@ -404,12 +417,60 @@ class Junos extends \LibreNMS\OS implements BgpAddressFamilyDiscovery, SlaDiscov
         }
 
         // could use improvement by mapping JUNIPER-IFOPTICS-MIB::jnxOpticsConfigTable for a tiny bit more info
-        return SnmpQuery::cache()->walk('JUNIPER-IFOPTICS-MIB::jnxOpticsPMCurrentTable')
+        return $this->transceiverTable('JUNIPER-IFOPTICS-MIB::jnxOpticsPMCurrentTable')
             ->mapTable(fn ($data, $ifIndex) => new Transceiver([
                 'port_id' => (int) PortCache::getIdFromIfIndex($ifIndex),
                 'index' => $ifIndex,
                 'entity_physical_index' => $ifIndex,
-            ]));
+            ]))->reject(fn (Transceiver $transceiver) => isset($removed[$transceiver->index]));
+    }
+
+    private function transceiverTable(string $oid): SnmpResponse
+    {
+        $response = SnmpQuery::cache()->walk($oid)->throwIfConnectionError();
+        if ($response->getExitCode() !== 0) {
+            throw new SnmpException('Incomplete SNMP table: ' . $oid);
+        }
+
+        return $response;
+    }
+
+    public function preCache()
+    {
+        // Use the typed response: YAML's ASCII output can lose non-printable BITS octets.
+        $dom = $this->transceiverTable('JUNIPER-DOM-MIB::jnxDomCurrentTable')->table(1);
+        $cache = parent::preCache();
+        $removed = [];
+        foreach ($dom as $index => $entry) {
+            if ($this->isDomModuleRemoved($entry)) {
+                $removed[(string) $index] = true;
+                unset($cache['JUNIPER-DOM-MIB::jnxDomCurrentTable'][$index]);
+            }
+        }
+
+        // Lane values may remain readable after the parent module was removed.
+        foreach ($cache['JUNIPER-DOM-MIB::jnxDomModuleLaneTable'] ?? [] as $index => $entry) {
+            if (isset($removed[explode('.', (string) $index, 2)[0]])) {
+                unset($cache['JUNIPER-DOM-MIB::jnxDomModuleLaneTable'][$index]);
+            }
+        }
+
+        foreach (array_keys($cache['JUNIPER-IFOPTICS-MIB::jnxOpticsPMCurrentTable'] ?? []) as $index) {
+            if (isset($removed[(string) $index])) {
+                unset($cache['JUNIPER-IFOPTICS-MIB::jnxOpticsPMCurrentTable'][$index]);
+            }
+        }
+
+        return $cache;
+    }
+
+    /** @param array<string, string> $entry */
+    private function isDomModuleRemoved(array $entry): bool
+    {
+        // Vendor bit 18 is index 19 in the one-based BITS decoder.
+        $alarm = str_replace([" ", "\t", "\r", "\n"], '', $entry['JUNIPER-DOM-MIB::jnxDomCurrentAlarms'] ?? '');
+
+        return strlen($alarm) === 6 && ctype_xdigit($alarm) && in_array(19, StringHelpers::bitsToIndices($alarm), true);
     }
 
     private function findTransceiverEntityByPortName(array $entPhysical, ?string $ifName): array
